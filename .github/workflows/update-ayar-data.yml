@@ -22,7 +22,7 @@ jobs:
         run: python scripts/update_ayar_data.py
       - name: Commit refreshed market data
         run: |
-          if git diff --quiet -- ayar-data.json; then
+          if [ -z "$(git status --porcelain -- ayar-data.json)" ]; then
             echo "Market data unchanged"
             exit 0
           fi
