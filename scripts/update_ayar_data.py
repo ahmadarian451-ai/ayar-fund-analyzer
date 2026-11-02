@@ -1,98 +1,176 @@
-import json, os, time, urllib.request, urllib.parse, datetime, sys
+import datetime
+import html
+import json
+import re
+import urllib.request
+from html.parser import HTMLParser
 
-BASES = ["https://cdn.tsetmc.com", "https://cdn10.tsetmc.com"]
+URLS = [
+    "https://www.tgju.org/profile/ime_fund_ayar/history",
+    "https://www.tgju.org/profile/ime_fund_ayar",
+]
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Referer": "https://www.tsetmc.com/",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.8",
+    "Referer": "https://www.tgju.org/",
 }
 
-def get_json(path):
-    errors = []
-    for base in BASES:
-        try:
-            req = urllib.request.Request(base + path, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=30) as res:
-                raw = res.read().decode("utf-8-sig")
-            return json.loads(raw)
-        except Exception as exc:
-            errors.append(f"{base}: {exc}")
-    raise RuntimeError("TSETMC API unavailable: " + " | ".join(errors))
+class TableParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tables, self.rows = [], []
+        self.row, self.cell = None, None
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.row = []
+        elif tag in ("td", "th") and self.row is not None:
+            self.cell = []
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell.append(data)
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self.cell is not None:
+            self.row.append(" ".join(self.cell).strip())
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            if self.row:
+                self.rows.append(self.row)
+            self.row = None
 
-def unwrap(obj, key):
-    if isinstance(obj, dict):
-        return obj.get(key, obj)
-    return obj
+def normalize_digits(value):
+    trans = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    return value.translate(trans).replace("\u066c", ",").replace("\u066b", ".")
 
-def num(obj, *keys, default=0):
-    for key in keys:
-        val = obj.get(key) if isinstance(obj, dict) else None
-        try:
-            if val not in (None, ""):
-                return float(val)
-        except (TypeError, ValueError):
-            pass
-    return default
+def number(value):
+    s = normalize_digits(value).replace(",", "").replace("٬", "").strip()
+    s = re.sub(r"[^0-9.\\-]", "", s)
+    try:
+        return float(s) if s and s not in ("-", ".") else None
+    except ValueError:
+        return None
+
+def jalali_to_gregorian(jy, jm, jd):
+    jy -= 979
+    days = 365 * jy + (jy // 33) * 8 + ((jy % 33 + 3) // 4) + 78 + jd
+    days += (jm - 1) * 31 if jm <= 7 else 186 + (jm - 7) * 30
+    gy = 1600 + 400 * (days // 146097)
+    days %= 146097
+    leap = True
+    if days > 36524:
+        gy += 100 * ((days - 1) // 36524)
+        days = (days - 1) % 36524
+        if days >= 365:
+            days += 1
+        else:
+            leap = False
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        gy += (days - 1) // 365
+        days = (days - 1) % 365
+        leap = False
+    else:
+        leap = True
+    gd = days + 1
+    month_days = [31, 29 if ((gy % 4 == 0 and gy % 100 != 0) or gy % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gm = 1
+    while gm <= 12 and gd > month_days[gm - 1]:
+        gd -= month_days[gm - 1]
+        gm += 1
+    return gy, gm, gd
+
+def parse_date(value):
+    s = normalize_digits(value).strip().replace("-", "/")
+    m = re.search(r"(13|14|20)\\d{2}/\\d{1,2}/\\d{1,2}", s)
+    if not m:
+        return None
+    y, mo, d = map(int, m.group(0).split("/"))
+    if y < 1700:
+        y, mo, d = jalali_to_gregorian(y, mo, d)
+    try:
+        return datetime.date(y, mo, d).strftime("%Y%m%d")
+    except ValueError:
+        return None
+
+def fetch(url):
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=35) as response:
+        return response.read().decode("utf-8", "replace")
+
+def parse_rows(source):
+    parser = TableParser()
+    parser.feed(source)
+    found = {}
+    for row in parser.rows:
+        date_idx = next((i for i, cell in enumerate(row) if parse_date(cell)), None)
+        if date_idx is None:
+            continue
+        date = parse_date(row[date_idx])
+        cells = row[:date_idx] if date_idx >= 4 else row[date_idx + 1:]
+        vals = [number(x) for x in cells]
+        vals = [x for x in vals if x is not None]
+        if len(vals) < 4:
+            continue
+        # TGJU archive columns: open, low, high, close, then change/percent.
+        op, low, high, close = vals[:4]
+        if min(op, low, high, close) <= 0:
+            continue
+        found[date] = {
+            "date": date, "open": op, "low": min(low, op, close),
+            "high": max(high, op, close), "close": close,
+            "last": close, "volume": 0, "value": 0, "trades": 0,
+        }
+    return found
 
 def main():
-    search = unwrap(get_json("/api/Instrument/GetInstrumentSearch/" + urllib.parse.quote("عیار")), "instrumentSearch")
-    if not isinstance(search, list):
-        raise RuntimeError("Unexpected TSETMC instrument search response")
-    exact = [x for x in search if str(x.get("lVal18AFC", "")).strip() == "عیار"]
-    if not exact:
-        exact = [x for x in search if "عیار" in str(x.get("lVal30", ""))]
-    if not exact:
-        raise RuntimeError("Fund symbol عیار not found in TSETMC search")
-    inst = exact[0]
-    inscode = str(inst["insCode"])
-    history_raw = unwrap(get_json(f"/api/ClosingPrice/GetClosingPriceDailyList/{inscode}/0"), "closingPriceDaily")
-    if not isinstance(history_raw, list) or len(history_raw) < 30:
-        raise RuntimeError(f"Insufficient daily history for عیار: {len(history_raw) if isinstance(history_raw, list) else 'invalid'}")
-    history = []
-    for x in history_raw:
-        try:
-            date = int(x.get("dEven", 0))
-            close = num(x, "pClosing", "pc")
-            if date and close > 0:
-                history.append({
-                    "date": str(date),
-                    "open": num(x, "priceFirst", "pf", default=close),
-                    "high": num(x, "priceMax", "pmax", default=close),
-                    "low": num(x, "priceMin", "pmin", default=close),
-                    "close": close,
-                    "last": num(x, "pDrCotVal", "pl", default=close),
-                    "volume": num(x, "qTotTran5J", "qTotTran", default=0),
-                    "value": num(x, "qTotCap", default=0),
-                    "trades": num(x, "zTotTran", default=0),
-                })
-        except Exception:
-            continue
-    history.sort(key=lambda x: x["date"])
-    quote = {}
-    fund = {}
-    try:
-        quote = unwrap(get_json(f"/api/ClosingPrice/GetClosingPriceInfo/{inscode}"), "closingPriceInfo")
-    except Exception as e:
-        quote = {"error": str(e)}
-    try:
-        fund = unwrap(get_json(f"/api/Fund/GetETFByInsCode/{inscode}"), "eTFByInsCode")
-    except Exception as e:
-        fund = {"error": str(e)}
+    merged = {}
+    page_used = None
+    errors = []
+    # Try the archive endpoint and a few common pagination forms; stop on repeats.
+    for base in URLS:
+        for page in range(1, 9):
+            url = base if page == 1 else base + ("&" if "?" in base else "?") + f"page={page}"
+            try:
+                rows = parse_rows(fetch(url))
+                if not rows:
+                    if page == 1:
+                        errors.append(f"{url}: no archive rows parsed")
+                    break
+                before = len(merged)
+                merged.update(rows)
+                page_used = base
+                if page > 1 and len(merged) == before:
+                    break
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+                break
+        if len(merged) >= 30:
+            break
+    history = [merged[k] for k in sorted(merged)]
+    if len(history) < 30:
+        raise RuntimeError("TGJU archive unavailable or too short. " + " | ".join(errors))
+    latest = history[-1]
     payload = {
         "symbol": "عیار",
-        "name": inst.get("lVal30", "صندوق طلای عیار"),
-        "insCode": inscode,
-        "isin": inst.get("cIsin"),
-        "source": "TSETMC",
+        "name": "صندوق طلای عیار",
+        "source": "TGJU",
+        "sourceUrl": page_used,
         "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "quote": quote,
-        "fund": fund,
+        "quote": {
+            "pDrCotVal": latest["close"],
+            "pClosing": latest["close"],
+            "priceYesterday": history[-2]["close"] if len(history) > 1 else None,
+            "priceMin": latest["low"],
+            "priceMax": latest["high"],
+            "note": "TGJU archive daily close; not a live tick feed",
+        },
+        "fund": {},
         "history": history,
     }
-    os.makedirs("data", exist_ok=True)
     with open("ayar-data.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"Saved {len(history)} rows for {payload['name']} ({inscode})")
+    print(f"Saved {len(history)} daily candles from TGJU. Latest: {latest['date']} close={latest['close']}")
 
 if __name__ == "__main__":
     main()
