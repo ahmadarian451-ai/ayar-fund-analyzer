@@ -1,0 +1,33 @@
+name: Refresh Ayar fund market data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    paths:
+      - "scripts/update_ayar_data.py"
+      - ".github/workflows/update-ayar-data.yml"
+permissions:
+  contents: write
+concurrency:
+  group: refresh-ayar-market-data
+  cancel-in-progress: true
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch latest Ayar data from TSETMC
+        run: python scripts/update_ayar_data.py
+      - name: Commit refreshed market data
+        run: |
+          if git diff --quiet -- ayar-data.json; then
+            echo "Market data unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ayar-data.json
+          git commit -m "Refresh Ayar fund market data"
+          git push
