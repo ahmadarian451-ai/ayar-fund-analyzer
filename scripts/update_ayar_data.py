@@ -44,7 +44,7 @@ def normalize_digits(value):
 
 def number(value):
     s = normalize_digits(value).replace(",", "").replace("٬", "").strip()
-    s = re.sub(r"[^0-9.\\-]", "", s)
+    s = re.sub(r"[^0-9.\-]", "", s)
     try:
         return float(s) if s and s not in ("-", ".") else None
     except ValueError:
@@ -82,7 +82,7 @@ def jalali_to_gregorian(jy, jm, jd):
 
 def parse_date(value):
     s = normalize_digits(value).strip().replace("-", "/")
-    m = re.search(r"(13|14|20)\\d{2}/\\d{1,2}/\\d{1,2}", s)
+    m = re.search(r"(13|14|20)\d{2}/\d{1,2}/\d{1,2}", s)
     if not m:
         return None
     y, mo, d = map(int, m.group(0).split("/"))
