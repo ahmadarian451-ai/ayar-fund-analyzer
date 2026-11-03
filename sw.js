@@ -1,4 +1,4 @@
-const CACHE='ayar-analyzer-v2';
+const CACHE='ayar-analyzer-v3';
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(['./','./index.html','./manifest.webmanifest']);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith('ayar-analyzer-')&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).origin!==location.origin)return;const u=new URL(e.request.url);if(u.pathname.endsWith('/ayar-data.json')){e.respondWith(fetch(e.request,{cache:'no-store'}));return;}if(e.request.mode==='navigate'||u.pathname.endsWith('/index.html')){e.respondWith((async()=>{try{const r=await fetch(e.request,{cache:'no-store'});const c=await caches.open(CACHE);c.put('./index.html',r.clone());return r}catch(err){return (await caches.match('./index.html'))||Response.error()}})());}});
