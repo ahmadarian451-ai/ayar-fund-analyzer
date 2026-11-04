@@ -1,6 +1,21 @@
 {
-  "name":"تحلیل‌گر هوشمند صندوق طلای عیار",
-  "short_name":"تحلیل عیار",
-  "lang":"fa","dir":"rtl","start_url":"./","scope":"./",
-  "display":"standalone","background_color":"#0b1220","theme_color":"#101a2b"
+  "name": "تحلیل‌گر هوشمند صندوق طلای عیار",
+  "short_name": "تحلیل عیار",
+  "description": "داشبورد تحلیل تکنیکال صندوق طلای عیار",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "./?source=pwa",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#101a2b",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
